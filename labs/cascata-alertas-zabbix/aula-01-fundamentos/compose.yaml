@@ -1,0 +1,168 @@
+name: nototi-cascata
+
+x-node: &node
+  build: ./devices
+  image: nototi-cascata-node:1
+  init: true
+  restart: unless-stopped
+  cap_drop: [ALL]
+  cap_add: [NET_ADMIN, NET_RAW]
+  read_only: true
+  tmpfs: [/tmp]
+  security_opt: [no-new-privileges:true]
+  sysctls:
+    net.ipv4.ip_forward: "1"
+    net.ipv4.conf.all.rp_filter: "0"
+    net.ipv4.conf.default.rp_filter: "0"
+  healthcheck:
+    test: [CMD-SHELL, "test -f /tmp/lab-node.ready"]
+    interval: 2s
+    timeout: 1s
+    retries: 20
+  logging:
+    driver: json-file
+    options: {max-size: 5m, max-file: "2"}
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: zabbix
+      POSTGRES_USER: zabbix
+      POSTGRES_PASSWORD: ${LAB_DB_PASSWORD:?Execute ./lab.sh up}
+    volumes: [postgres-data:/var/lib/postgresql/data]
+    networks: [backend]
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U zabbix -d zabbix"]
+      interval: 5s
+      timeout: 3s
+      retries: 60
+
+  noc:
+    <<: *node
+    environment: {LAB_ROLE: noc, LAB_NET_PREFIX: "${LAB_NET_PREFIX}"}
+    networks:
+      backend: {ipv4_address: "${LAB_NET_PREFIX}.0.10", aliases: [zabbix-server]}
+      transit: {ipv4_address: "${LAB_NET_PREFIX}.10.10"}
+
+  core:
+    <<: *node
+    environment: {LAB_ROLE: core, LAB_NET_PREFIX: "${LAB_NET_PREFIX}"}
+    networks:
+      transit: {ipv4_address: "${LAB_NET_PREFIX}.10.2"}
+      distribution: {ipv4_address: "${LAB_NET_PREFIX}.20.2"}
+
+  pop-centro:
+    <<: *node
+    environment: {LAB_ROLE: pop-centro, LAB_NET_PREFIX: "${LAB_NET_PREFIX}"}
+    networks:
+      distribution: {ipv4_address: "${LAB_NET_PREFIX}.20.11"}
+      centro: {ipv4_address: "${LAB_NET_PREFIX}.30.2"}
+
+  pop-norte:
+    <<: *node
+    environment: {LAB_ROLE: pop-norte, LAB_NET_PREFIX: "${LAB_NET_PREFIX}"}
+    networks:
+      distribution: {ipv4_address: "${LAB_NET_PREFIX}.20.12"}
+      norte: {ipv4_address: "${LAB_NET_PREFIX}.40.2"}
+
+  olt-centro-01:
+    <<: *node
+    environment: {LAB_ROLE: olt-centro, LAB_NET_PREFIX: "${LAB_NET_PREFIX}"}
+    networks:
+      centro: {ipv4_address: "${LAB_NET_PREFIX}.30.11"}
+
+  olt-centro-02:
+    <<: *node
+    environment: {LAB_ROLE: olt-centro, LAB_NET_PREFIX: "${LAB_NET_PREFIX}"}
+    networks:
+      centro: {ipv4_address: "${LAB_NET_PREFIX}.30.12"}
+
+  olt-norte-01:
+    <<: *node
+    environment: {LAB_ROLE: olt-norte, LAB_NET_PREFIX: "${LAB_NET_PREFIX}"}
+    networks:
+      norte: {ipv4_address: "${LAB_NET_PREFIX}.40.11"}
+
+  olt-norte-02:
+    <<: *node
+    environment: {LAB_ROLE: olt-norte, LAB_NET_PREFIX: "${LAB_NET_PREFIX}"}
+    networks:
+      norte: {ipv4_address: "${LAB_NET_PREFIX}.40.12"}
+
+  zabbix-server:
+    image: zabbix/zabbix-server-pgsql:${LAB_ZABBIX_TAG:-alpine-7.0-latest}
+    restart: unless-stopped
+    network_mode: service:noc
+    depends_on:
+      db: {condition: service_healthy}
+      noc: {condition: service_healthy}
+      notificacoes: {condition: service_healthy}
+    environment:
+      DB_SERVER_HOST: db
+      POSTGRES_DB: zabbix
+      POSTGRES_USER: zabbix
+      POSTGRES_PASSWORD: ${LAB_DB_PASSWORD}
+      ZBX_STARTPINGERS: "3"
+      ZBX_CACHEUPDATEFREQUENCY: "5"
+      ZBX_CACHESIZE: 32M
+      ZBX_VALUECACHESIZE: 16M
+      ZBX_STARTALERTERS: "2"
+      ZBX_DEBUGLEVEL: "3"
+    cap_add: [NET_RAW]
+
+  zabbix-web:
+    image: zabbix/zabbix-web-nginx-pgsql:${LAB_ZABBIX_TAG:-alpine-7.0-latest}
+    restart: unless-stopped
+    depends_on:
+      db: {condition: service_healthy}
+      zabbix-server: {condition: service_started}
+    environment:
+      DB_SERVER_HOST: db
+      POSTGRES_DB: zabbix
+      POSTGRES_USER: zabbix
+      POSTGRES_PASSWORD: ${LAB_DB_PASSWORD}
+      ZBX_SERVER_HOST: zabbix-server
+      ZBX_SERVER_NAME: NOTO TI - Laboratorio ISP
+      PHP_TZ: America/Sao_Paulo
+    ports: ["127.0.0.1:${LAB_WEB_PORT}:8080"]
+    networks: [backend]
+
+  notificacoes:
+    image: python:3.12-alpine
+    restart: unless-stopped
+    command: [python, -u, /app/receiver.py]
+    environment:
+      LAB_NOTIFY_TOKEN: ${LAB_NOTIFY_TOKEN}
+      PYTHONDONTWRITEBYTECODE: "1"
+    volumes:
+      - ./notifications/receiver.py:/app/receiver.py:ro
+      - notifications-data:/data
+    ports: ["127.0.0.1:${LAB_NOTIFY_PORT}:8080"]
+    networks: [backend]
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health',timeout=2)"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+networks:
+  backend:
+    ipam: {config: [{subnet: "${LAB_NET_PREFIX}.0.0/24"}]}
+  transit:
+    internal: true
+    ipam: {config: [{subnet: "${LAB_NET_PREFIX}.10.0/24"}]}
+  distribution:
+    internal: true
+    ipam: {config: [{subnet: "${LAB_NET_PREFIX}.20.0/24"}]}
+  centro:
+    internal: true
+    ipam: {config: [{subnet: "${LAB_NET_PREFIX}.30.0/24"}]}
+  norte:
+    internal: true
+    ipam: {config: [{subnet: "${LAB_NET_PREFIX}.40.0/24"}]}
+
+volumes:
+  postgres-data:
+  notifications-data:

@@ -1,0 +1,7 @@
+.env
+.lab-state.json
+.lab.lock
+test-report.json
+__pycache__/
+*.pyc
+.DS_Store

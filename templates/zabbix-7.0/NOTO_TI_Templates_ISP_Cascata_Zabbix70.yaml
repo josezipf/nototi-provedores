@@ -1,0 +1,148 @@
+zabbix_export:
+  version: '7.0'
+  template_groups:
+    - uuid: c0c8321096134d468d389be5ec4de8f3
+      name: 'LAB - NOTO TI - Templates ISP'
+  templates:
+    - uuid: c7e76f7b3e2a4b8b9132cc7c810f74c0
+      template: 'TPL - NOTO TI - Base ICMP ISP'
+      name: 'TPL - NOTO TI - Base ICMP ISP'
+      description: 'Template Base único de ICMP (Disponibilidade, Perda e Latência) com dependências internas e macros.'
+      groups:
+        - name: 'LAB - NOTO TI - Templates ISP'
+      items:
+        - uuid: a782646598134f04bf79ef8d4fcddf25
+          name: 'Perda de pacotes ICMP'
+          type: SIMPLE
+          key: 'icmppingloss[,3,200,,500]'
+          delay: 5s
+          history: 1d
+          value_type: FLOAT
+          trends: '0'
+          units: '%'
+          triggers:
+            - uuid: 3c115f1f647d4f1da85b0f363a3abeae
+              expression: 'min(/TPL - NOTO TI - Base ICMP ISP/icmppingloss[,3,200,,500],{$ICMP.PERDA.AMOSTRAS})>{$ICMP.LOSS.WARN} and max(/TPL - NOTO TI - Base ICMP ISP/icmppingloss[,3,200,,500],{$ICMP.PERDA.AMOSTRAS})<100'
+              name: '{HOST.NAME}: Perda de pacotes alta (>{$ICMP.LOSS.WARN}%)'
+              priority: AVERAGE
+              dependencies:
+                - name: '{HOST.NAME}: Equipamento inacessivel'
+                  expression: 'max(/TPL - NOTO TI - Base ICMP ISP/icmpping[,3,200,,500],{$ICMP.FALHAS})=0'
+              tags:
+                - tag: lab
+                  value: nototi-cascata-aula02
+                - tag: tipo_alerta
+                  value: perda_pacotes
+        - uuid: 2f636904205e4082a8ce376e680f48d4
+          name: 'Tempo de resposta ICMP'
+          type: SIMPLE
+          key: 'icmppingsec[,3,200,,500]'
+          delay: 5s
+          history: 1d
+          value_type: FLOAT
+          trends: '0'
+          units: s
+          triggers:
+            - uuid: 7f5d7e899cc045549f13e1d53eea9426
+              expression: 'min(/TPL - NOTO TI - Base ICMP ISP/icmppingsec[,3,200,,500],{$ICMP.LATENCIA.AMOSTRAS})>{$ICMP.LATENCIA.WARN}'
+              name: '{HOST.NAME}: Latencia alta (>80ms)'
+              priority: WARNING
+              dependencies:
+                - name: '{HOST.NAME}: Equipamento inacessivel'
+                  expression: 'max(/TPL - NOTO TI - Base ICMP ISP/icmpping[,3,200,,500],{$ICMP.FALHAS})=0'
+                - name: '{HOST.NAME}: Perda de pacotes alta (>{$ICMP.LOSS.WARN}%)'
+                  expression: 'min(/TPL - NOTO TI - Base ICMP ISP/icmppingloss[,3,200,,500],{$ICMP.PERDA.AMOSTRAS})>{$ICMP.LOSS.WARN} and max(/TPL - NOTO TI - Base ICMP ISP/icmppingloss[,3,200,,500],{$ICMP.PERDA.AMOSTRAS})<100'
+              tags:
+                - tag: lab
+                  value: nototi-cascata-aula02
+                - tag: tipo_alerta
+                  value: latencia
+        - uuid: 0f50779ee175467893f4200d13c521b6
+          name: 'Disponibilidade ICMP'
+          type: SIMPLE
+          key: 'icmpping[,3,200,,500]'
+          delay: 5s
+          history: 1d
+          trends: '0'
+          triggers:
+            - uuid: 539a820493e542dcaa222ca7ff06c3f3
+              expression: 'max(/TPL - NOTO TI - Base ICMP ISP/icmpping[,3,200,,500],{$ICMP.FALHAS})=0'
+              name: '{HOST.NAME}: Equipamento inacessivel'
+              priority: HIGH
+              tags:
+                - tag: lab
+                  value: nototi-cascata-aula02
+                - tag: tipo_alerta
+                  value: indisponibilidade
+      tags:
+        - tag: escopo
+          value: icmp-base
+        - tag: lab
+          value: nototi-cascata-aula02
+      macros:
+        - macro: '{$ICMP.FALHAS}'
+          value: '#3'
+          description: 'Amostras consecutivas para indisponibilidade (sobrescrita por camada: #2, #6, #10)'
+        - macro: '{$ICMP.LATENCIA.AMOSTRAS}'
+          value: '#4'
+          description: 'Amostras consecutivas para latência alta (~20s, avalia após perda)'
+        - macro: '{$ICMP.LATENCIA.WARN}'
+          value: '0.08'
+          description: 'Limite de tempo de resposta ICMP em segundos (80ms)'
+        - macro: '{$ICMP.LOSS.WARN}'
+          value: '20'
+          description: 'Limite percentual de perda de pacotes ICMP (%)'
+        - macro: '{$ICMP.PERDA.AMOSTRAS}'
+          value: '#2'
+          description: 'Amostras consecutivas para perda de pacotes (~10s, abre antes da latência)'
+    - uuid: b2ffc1f41d904bd9a1d5a6c5a6a34726
+      template: 'TPL - NOTO TI - N1 Core'
+      name: 'TPL - NOTO TI - N1 Core'
+      description: 'Template da Camada N1 — herda ''TPL - NOTO TI - Base ICMP ISP'' e define {$ICMP.FALHAS}=#2.'
+      templates:
+        - name: 'TPL - NOTO TI - Base ICMP ISP'
+      groups:
+        - name: 'LAB - NOTO TI - Templates ISP'
+      tags:
+        - tag: camada
+          value: n1-core
+        - tag: nivel
+          value: '1'
+      macros:
+        - macro: '{$ICMP.FALHAS}'
+          value: '#2'
+          description: 'Janela da camada N1: #2 coletas (10s)'
+    - uuid: a2670abb3733454aba9ec8031bc5bc7e
+      template: 'TPL - NOTO TI - N2 Switch POP'
+      name: 'TPL - NOTO TI - N2 Switch POP'
+      description: 'Template da Camada N2 — herda ''TPL - NOTO TI - Base ICMP ISP'' e define {$ICMP.FALHAS}=#6.'
+      templates:
+        - name: 'TPL - NOTO TI - Base ICMP ISP'
+      groups:
+        - name: 'LAB - NOTO TI - Templates ISP'
+      tags:
+        - tag: camada
+          value: n2-distribuicao
+        - tag: nivel
+          value: '2'
+      macros:
+        - macro: '{$ICMP.FALHAS}'
+          value: '#6'
+          description: 'Janela da camada N2: #6 coletas (30s)'
+    - uuid: ac968cd562ff4a11879db225dd1816cc
+      template: 'TPL - NOTO TI - N3 OLT'
+      name: 'TPL - NOTO TI - N3 OLT'
+      description: 'Template da Camada N3 — herda ''TPL - NOTO TI - Base ICMP ISP'' e define {$ICMP.FALHAS}=#10.'
+      templates:
+        - name: 'TPL - NOTO TI - Base ICMP ISP'
+      groups:
+        - name: 'LAB - NOTO TI - Templates ISP'
+      tags:
+        - tag: camada
+          value: n3-acesso
+        - tag: nivel
+          value: '3'
+      macros:
+        - macro: '{$ICMP.FALHAS}'
+          value: '#10'
+          description: 'Janela da camada N3: #10 coletas (50s)'
